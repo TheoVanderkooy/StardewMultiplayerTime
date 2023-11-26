@@ -74,6 +74,8 @@ namespace MultiplayerTime
         /// <summary>The mod entry point, called after the mod is first loaded.</summary>
         /// <param name="helper">Provides simplified APIs for writing mods.</param>
         int timeinterval = 0;
+        int last_timeInterval = 0;
+        double missing_time = 0.0;
         int SKL = 0;
         int SKH = 0;
         bool SKTime = true;
@@ -405,387 +407,422 @@ namespace MultiplayerTime
 
         private void GameEvents_UpdateTick(object sender, EventArgs e)
         {
-            if (Context.IsWorldReady)
+            if (!Context.IsWorldReady) return;
+
+            // when time wraps arround: reset last interval
+            if (Game1.gameTimeInterval < last_timeInterval)
             {
-                if (Gracze.Count < Game1.getOnlineFarmers().Count)
+                last_timeInterval = 0;
+            }
+            
+            if (Gracze.Count < Game1.getOnlineFarmers().Count)
+            {
+                foreach (Farmer gracz in Game1.getOnlineFarmers().Where(x => !Gracze.Any(z => x.UniqueMultiplayerID == z.PlayerID)).ToList())
                 {
-                    foreach (Farmer gracz in Game1.getOnlineFarmers().Where(x => !Gracze.Any(z => x.UniqueMultiplayerID == z.PlayerID)).ToList())
-                    {
-                        Gracze.Add(new PlayerList(gracz.UniqueMultiplayerID));
-                    }
+                    Gracze.Add(new PlayerList(gracz.UniqueMultiplayerID));
                 }
-                bool paused = !ShouldTimePass();
-                if (Me.message != 1 && (!Context.IsPlayerFree || (Game1.currentMinigame != null && (Game1.currentMinigame.minigameId() == "PrairieKing" || Game1.currentMinigame.minigameId() == nameof(CraneGame) || Game1.currentMinigame.minigameId() == nameof(Slots))) || (!Context.CanPlayerMove && !Game1.player.UsingTool) || Game1.freezeControls || Game1.activeClickableMenu is BobberBar))
-                {
+            }
+            bool paused = !ShouldTimePass();
+            if (Me.message != 1 && (!Context.IsPlayerFree || (Game1.currentMinigame != null && (Game1.currentMinigame.minigameId() == "PrairieKing" || Game1.currentMinigame.minigameId() == nameof(CraneGame) || Game1.currentMinigame.minigameId() == nameof(Slots))) || (!Context.CanPlayerMove && !Game1.player.UsingTool) || Game1.freezeControls || Game1.activeClickableMenu is BobberBar))
+            {
                     this.Helper.Multiplayer.SendMessage(1, "pause?", modIDs: new[] { this.ModManifest.UniqueID});
-                    Me.message = 1;
-                }
-                if (Me.message != 0 && Context.IsPlayerFree && Game1.currentMinigame == null && !Game1.freezeControls && (Context.CanPlayerMove || Game1.player.UsingTool))
+                Me.message = 1;
+            }
+            if (Me.message != 0 && Context.IsPlayerFree && Game1.currentMinigame == null && !Game1.freezeControls && (Context.CanPlayerMove || Game1.player.UsingTool))
+            {
+                this.Helper.Multiplayer.SendMessage(0, "pause?", modIDs: new[] { this.ModManifest.UniqueID });
+                Me.message = 0;
+            }
+            if (Game1.player.currentLocation is MineShaft && (Game1.player.currentLocation as MineShaft).getMineArea() == 121)
+            {
+                if (Game1.player.currentLocation.map.GetLayer("Buildings").Tiles[(int)Game1.currentCursorTile.X, (int)Game1.currentCursorTile.Y] != null && Game1.player.currentLocation.map.GetLayer("Buildings").Tiles[(int)Game1.currentCursorTile.X, (int)Game1.currentCursorTile.Y].TileIndex == 174)
                 {
-                    this.Helper.Multiplayer.SendMessage(0, "pause?", modIDs: new[] { this.ModManifest.UniqueID });
-                    Me.message = 0;
+                    SKL = (Game1.player.currentLocation as MineShaft).mineLevel;
+                    SKH = Game1.player.health;
                 }
-                if (Game1.player.currentLocation is MineShaft && (Game1.player.currentLocation as MineShaft).getMineArea() == 121)
-                {
-                    if (Game1.player.currentLocation.map.GetLayer("Buildings").Tiles[(int)Game1.currentCursorTile.X, (int)Game1.currentCursorTile.Y] != null && Game1.player.currentLocation.map.GetLayer("Buildings").Tiles[(int)Game1.currentCursorTile.X, (int)Game1.currentCursorTile.Y].TileIndex == 174)
-                    {
-                        SKL = (Game1.player.currentLocation as MineShaft).mineLevel;
-                        SKH = Game1.player.health;
-                    }
-                    if ((Game1.player.currentLocation as MineShaft).mineLevel - SKL == 1)
-                    {
-                        SKL = 0;
-                    }
-                    else if (SKL != 0 && (Game1.player.currentLocation as MineShaft).mineLevel - SKL > 1 && SKH == Game1.player.health)
-                    {
-                        Game1.player.health = Math.Max(1, SKH - ((Game1.player.currentLocation as MineShaft).mineLevel - SKL) * 3);
-                        SKL = 0;
-                    }
-                }
-                else
+                if ((Game1.player.currentLocation as MineShaft).mineLevel - SKL == 1)
                 {
                     SKL = 0;
                 }
-                if (paused && ShouldTimePass())
+                else if (SKL != 0 && (Game1.player.currentLocation as MineShaft).mineLevel - SKL > 1 && SKH == Game1.player.health)
                 {
-                    JustUnpaused = true;
+                    Game1.player.health = Math.Max(1, SKH - ((Game1.player.currentLocation as MineShaft).mineLevel - SKL) * 3);
+                    SKL = 0;
                 }
-                if (!paused && !ShouldTimePass())
+            }
+            else
+            {
+                SKL = 0;
+            }
+            if (paused && ShouldTimePass())
+            {
+                JustUnpaused = true;
+            }
+            if (!paused && !ShouldTimePass())
+            {
+                JustPaused = true;
+            }
+            if (JustPaused)
+            {
+                if (Game1.buffsDisplay.food != null)
                 {
-                    JustPaused = true;
-                }
-                if (JustPaused)
-                {
-                    if (Game1.buffsDisplay.food != null)
-                    {
                         food = new Buffs(Game1.buffsDisplay.food,Game1.buffsDisplay.food.millisecondsDuration);
+                }
+                if (Game1.buffsDisplay.drink != null)
+                {
+                    drink = new Buffs(Game1.buffsDisplay.drink, Game1.buffsDisplay.drink.millisecondsDuration);
+                }
+                foreach (Buff buff in Game1.buffsDisplay.otherBuffs)
+                {
+                    buffs.Add(new Buffs(buff, buff.millisecondsDuration));
+                }
+            }
+            if (!ShouldTimePass())
+            {
+                if( food != null && food.buff == Game1.buffsDisplay.food)
+                {
+                    Game1.buffsDisplay.food.millisecondsDuration = food.duration;
+                }
+                else
+                {
+                    if(Game1.buffsDisplay.food != null)
+                    {
+                        food = new Buffs(Game1.buffsDisplay.food, Game1.buffsDisplay.food.millisecondsDuration);
                     }
+                    else
+                    {
+                        food = null;
+                    }
+                }
+                if (drink != null && drink.buff == Game1.buffsDisplay.drink)
+                {
+                    Game1.buffsDisplay.drink.millisecondsDuration = drink.duration;
+                }
+                else
+                {
                     if (Game1.buffsDisplay.drink != null)
                     {
                         drink = new Buffs(Game1.buffsDisplay.drink, Game1.buffsDisplay.drink.millisecondsDuration);
                     }
-                    foreach (Buff buff in Game1.buffsDisplay.otherBuffs)
-                    {
-                        buffs.Add(new Buffs(buff, buff.millisecondsDuration));
-                    }
-                }
-                if (!ShouldTimePass())
-                {
-                    if( food != null && food.buff == Game1.buffsDisplay.food)
-                    {
-                        Game1.buffsDisplay.food.millisecondsDuration = food.duration;
-                    }
                     else
                     {
-                        if(Game1.buffsDisplay.food != null)
-                        {
-                            food = new Buffs(Game1.buffsDisplay.food, Game1.buffsDisplay.food.millisecondsDuration);
-                        }
-                        else
-                        {
-                            food = null;
-                        }
-                    }
-                    if (drink != null && drink.buff == Game1.buffsDisplay.drink)
-                    {
-                        Game1.buffsDisplay.drink.millisecondsDuration = drink.duration;
-                    }
-                    else
-                    {
-                        if (Game1.buffsDisplay.drink != null)
-                        {
-                            drink = new Buffs(Game1.buffsDisplay.drink, Game1.buffsDisplay.drink.millisecondsDuration);
-                        }
-                        else
-                        {
-                            drink = null;
-                        }
-                    }
-                    foreach (Buff buff in Game1.buffsDisplay.otherBuffs)
-                    {
-                        bool handled = false;
-                        foreach (Buffs b in buffs)
-                        {
-                            if(buff == b.buff)
-                            {
-                                buff.millisecondsDuration = b.duration;
-                                handled = true;
-                                break;
-                            }
-                        }
-                        if (handled == false)
-                        {
-                            switch (buff.which)
-                            {
-                                case 12: case 13: case 14: case 19: case 25: case 26: case 27:
-                                    buff.millisecondsDuration = 0;
-                                    break;
-                                case 17: case 20: case 21: case 22: case 23: case 24: case 28:
-                                    buffs.Add(new Buffs(buff, buff.millisecondsDuration));
-                                    break;
-                            }
-                        }
+                        drink = null;
                     }
                 }
-                if (JustUnpaused)
+                foreach (Buff buff in Game1.buffsDisplay.otherBuffs)
                 {
-                    food = null;
-                    drink = null;
-                    buffs.Clear();
-                }
-                if (Context.IsMainPlayer)
-                {
-                    bool hasRemotePlayers = false;
-                    foreach (Farmer gracz in Game1.getOnlineFarmers())
+                    bool handled = false;
+                    foreach (Buffs b in buffs)
                     {
-                        if (!gracz.IsLocalPlayer)
+                        if(buff == b.buff)
                         {
-                            hasRemotePlayers = true;
+                            buff.millisecondsDuration = b.duration;
+                            handled = true;
                             break;
                         }
                     }
-                    if (hasRemotePlayers)
+                    if (handled == false)
                     {
-                        if (JustPaused)
+                        switch (buff.which)
                         {
-                            timeinterval = Game1.gameTimeInterval > 6800 ? 6800 : Game1.gameTimeInterval;
-                            foreach (Farmer gracz in Game1.getOnlineFarmers())
-                            {
-                                if (gracz.currentLocation != null)
-                                {
-                                    if (!locations.Contains(gracz.currentLocation))
-                                    {
-                                        locations.Add(gracz.currentLocation);
-                                    }
-                                }
-                            }
-                            foreach (GameLocation location in locations)
-                            {
-
-                                for (int k = location.TemporarySprites.Count - 1; k >= 0; k--)
-                                {
-                                    if (location.TemporarySprites[k].bombRadius > 0)
-                                    {
-                                        location.TemporarySprites[k].paused = true;
-                                    }
-                                }
-                                foreach (Character Monsters in location.characters)
-                                {
-                                    if (Monsters is Monster)
-                                    {
-                                        if (Monsters is not Bug)
-                                        {
-                                            Monsters.Halt();
-                                        }
-                                        if (Monsters is GreenSlime || Monsters is SquidKid)
-                                        {
-                                            (Monsters as Monster).moveTowardPlayer(0);
-                                        }
-                                        if (Monsters is Duggy)
-                                        {
-                                            potwory.Add(new Potwory(Monsters as Monster, Monsters.Sprite.currentFrame, (Monsters as Monster).Health));
-                                        }
-                                        if (Monsters is DinoMonster)
-                                        {
-                                            potwory.Add(new Potwory(Monsters as Monster, (Monsters as DinoMonster).totalFireTime, (Monsters as Monster).Health));
-                                        }
-                                        if (Monsters is ShadowShaman && potwory.Count == 0)
-                                        {
-                                            foreach (Character m in location.characters)
-                                            {
-                                                if (m is Monster)
-                                                {
-                                                    potwory.Add(new Potwory(m as Monster, 0, (m as Monster).Health));
-                                                }
-                                            }
-                                        }
-                                        Monsters.Speed = 0;
-                                    }
-                                }
-                            }
-                        }
-                        if (!ShouldTimePass())
-                        {
-                            Game1.gameTimeInterval = timeinterval;
-                            foreach (GameLocation location in Game1.locations)
-                            {
-                                foreach (Character NPCs in location.characters)
-                                {
-                                    if (NPCs is NPC || NPCs is Pet)
-                                    {
-                                        NPCs.movementPause = 1;
-                                    }
-                                }
-                                if (location is Farm)
-                                {
-                                    foreach (FarmAnimal animal in (location as Farm).getAllFarmAnimals())
-                                    {
-                                        animal.pauseTimer = 100;
-                                    }
-                                }
-                            }
-                            foreach (Farmer gracz in Game1.getOnlineFarmers())
-                            {
-                                gracz.temporarilyInvincible = true;
-                                gracz.temporaryInvincibilityTimer = 0;
-                                if (gracz.currentLocation != null)
-                                {
-                                    if (!locations.Contains(gracz.currentLocation))
-                                    {
-                                        locations.Add(gracz.currentLocation);
-                                    }
-                                }
-                            }
-                            foreach (GameLocation location in locations)
-                            {
-                                foreach (Character Monsters in location.characters)
-                                {
-                                    if (Monsters is Monster)
-                                    {
-                                        if (Monsters is Bat || Monsters is Ghost || Monsters is DustSpirit || Monsters is DwarvishSentry || Monsters is DinoMonster)
-                                        {
-                                            Monsters.xVelocity = 0f;
-                                            Monsters.yVelocity = 0f;
-                                            if (Monsters is DustSpirit)
-                                            {
-                                                Monsters.yJumpVelocity = 0f;
-                                            }
-                                        }
-                                        if (Monsters is Fly || Monsters is Serpent)
-                                        {
-                                            (Monsters as Monster).setInvincibleCountdown(100);
-                                            Monsters.stopGlowing();
-                                        }
-                                        if (Monsters is LavaLurk)
-                                        {
-                                            (Monsters as LavaLurk).stateTimer = 1f;
-                                            if ((Monsters as LavaLurk).currentState.Value == LavaLurk.State.Firing)
-                                            {
-                                                (Monsters as LavaLurk).currentState.Value = LavaLurk.State.Emerged;
-                                            }
-                                        }
-                                        if (Monsters is BlueSquid)
-                                        {
-                                            (Monsters as BlueSquid).canMoveTimer = 500f;
-                                            if ((Monsters as BlueSquid).projectileIntroTimer.Value > 0)
-                                            {
-                                                (Monsters as BlueSquid).projectileIntroTimer.Value = 1000f;
-                                            }
-                                        }
-                                        if (Monsters is DinoMonster)
-                                        {
-                                            if ((Monsters as DinoMonster).totalFireTime > 0)
-                                            {
-                                                (Monsters as DinoMonster).nextFireTime = 500;
-                                                (Monsters as DinoMonster).totalFireTime = 3000;
-                                            }
-                                        }
-                                        if (Monsters is Leaper)
-                                        {
-                                            if ((Monsters as Leaper).leapProgress.Value < 0.1f)
-                                            {
-                                                (Monsters as Leaper).leaping.Value = false;
-                                            }
-                                        }
-                                        if (Monsters is Skeleton)
-                                        {
-                                            Monsters.Sprite.currentFrame = 0;
-                                        }
-                                        if (Monsters is Shooter)
-                                        {
-                                            (Monsters as Shooter).shooting.Value = false;
-                                        }
-                                    }
-                                }
-                            }
-                            foreach (Potwory potwor in potwory)
-                            {
-                                if (potwor.monster is Duggy)
-                                {
-                                    potwor.monster.Sprite.currentFrame = potwor.info;
-                                }
-                            }
-                            if (Game1.player.swimming.Value && !Game1.eventUp && !Game1.paused)
-                            {
-                                Game1.player.swimTimer = 100;
-                            }
-                            if (Game1.player.isInBed.Value && !Game1.eventUp && !Game1.paused)
-                            {
-                                Game1.player.regenTimer = 100;
-                            }
-                        }
-                        if (JustUnpaused)
-                        {
-                            foreach (GameLocation location in locations)
-                            {
-                                foreach (Character Monsters in location.characters)
-                                {
-                                    if (Monsters is Monster)
-                                    {
-                                        if (Monsters.Speed == 0)
-                                        {
-                                            Monsters.Speed = Convert.ToInt32(MonsterInfo(Monsters.Name)[10]);
-                                            if (Monsters is Spiker)
-                                            {
-                                                Monsters.Speed = 14;
-                                            }
-                                            if (Monsters is GreenSlime || Monsters is SquidKid)
-                                            {
-                                                (Monsters as Monster).moveTowardPlayer(Convert.ToInt32(MonsterInfo(Monsters.Name)[9]));
-                                            }
-                                        }
-                                    }
-                                }
-                                for (int k = location.TemporarySprites.Count - 1; k >= 0; k--)
-                                {
-                                    if (location.TemporarySprites[k].bombRadius > 0)
-                                    {
-                                        location.TemporarySprites[k].paused = false;
-                                    }
-                                }
-                            }
-                            foreach (Potwory potwor in potwory)
-                            {
-                                if (potwor.monster is DinoMonster)
-                                {
-                                    (potwor.monster as DinoMonster).totalFireTime = potwor.info + 500;
-                                }
-                                potwor.monster.Health = potwor.Health;
-                            }
-                            foreach (Farmer gracz in Game1.getOnlineFarmers())
-                            {
-                                gracz.temporarilyInvincible = false;
-                                gracz.temporaryInvincibilityTimer = 0;
-                            }
-                            potwory.Clear();
-                            locations.Clear();
-                        }
-                        if (SKTime && Game1.gameTimeInterval > 4000)
-                        {
-                            bool AllSK = true;
-                            foreach (Farmer gracz in Game1.getOnlineFarmers())
-                            {
-                                if (gracz.currentLocation is not MineShaft || (gracz.currentLocation as MineShaft).getMineArea() != 121 || (gracz.currentLocation as MineShaft).mustKillAllMonstersToAdvance())
-                                {
-                                    AllSK = false;
-                                }
-                            }
-                            if (AllSK)
-                            {
-                                Game1.gameTimeInterval -= 1833;
-                                timeinterval -= 1833;
-                                SKTime = false;
-                            }
-                        }
-                        if (!SKTime && Game1.gameTimeInterval < 1000)
-                        {
-                            SKTime = true;
+                            case 12: case 13: case 14: case 19: case 25: case 26: case 27:
+                                buff.millisecondsDuration = 0;
+                                break;
+                            case 17: case 20: case 21: case 22: case 23: case 24: case 28:
+                                buffs.Add(new Buffs(buff, buff.millisecondsDuration));
+                                break;
                         }
                     }
                 }
-                JustPaused = false;
-                JustUnpaused = false;
             }
+            if (JustUnpaused)
+            {
+                food = null;
+                drink = null;
+                buffs.Clear();
+            }
+            if (Context.IsMainPlayer)
+            {
+                bool hasRemotePlayers = false;
+                foreach (Farmer gracz in Game1.getOnlineFarmers())
+                {
+                    if (!gracz.IsLocalPlayer)
+                    {
+                        hasRemotePlayers = true;
+                        break;
+                    }
+                }
+                if (hasRemotePlayers)
+                {
+                    if (JustPaused)
+                    {
+                        timeinterval = Game1.gameTimeInterval > 6800 ? 6800 : Game1.gameTimeInterval;
+                        foreach (Farmer gracz in Game1.getOnlineFarmers())
+                        {
+                            if (gracz.currentLocation != null)
+                            {
+                                if (!locations.Contains(gracz.currentLocation))
+                                {
+                                    locations.Add(gracz.currentLocation);
+                                }
+                            }
+                        }
+                        foreach (GameLocation location in locations)
+                        {
+
+                            for (int k = location.TemporarySprites.Count - 1; k >= 0; k--)
+                            {
+                                if (location.TemporarySprites[k].bombRadius > 0)
+                                {
+                                    location.TemporarySprites[k].paused = true;
+                                }
+                            }
+                            foreach (Character Monsters in location.characters)
+                            {
+                                if (Monsters is Monster)
+                                {
+                                    if (Monsters is not Bug)
+                                    {
+                                        Monsters.Halt();
+                                    }
+                                    if (Monsters is GreenSlime || Monsters is SquidKid)
+                                    {
+                                        (Monsters as Monster).moveTowardPlayer(0);
+                                    }
+                                    if (Monsters is Duggy)
+                                    {
+                                        potwory.Add(new Potwory(Monsters as Monster, Monsters.Sprite.currentFrame, (Monsters as Monster).Health));
+                                    }
+                                    if (Monsters is DinoMonster)
+                                    {
+                                        potwory.Add(new Potwory(Monsters as Monster, (Monsters as DinoMonster).totalFireTime, (Monsters as Monster).Health));
+                                    }
+                                    if (Monsters is ShadowShaman && potwory.Count == 0)
+                                    {
+                                        foreach (Character m in location.characters)
+                                        {
+                                            if (m is Monster)
+                                            {
+                                                potwory.Add(new Potwory(m as Monster, 0, (m as Monster).Health));
+                                            }
+                                        }
+                                    }
+                                    Monsters.Speed = 0;
+                                }
+                            }
+                        }
+                    }
+                    if (!ShouldTimePass())
+                    {
+                        Game1.gameTimeInterval = timeinterval;
+                        foreach (GameLocation location in Game1.locations)
+                        {
+                            foreach (Character NPCs in location.characters)
+                            {
+                                if (NPCs is NPC || NPCs is Pet)
+                                {
+                                    NPCs.movementPause = 1;
+                                }
+                            }
+                            if (location is Farm)
+                            {
+                                foreach (FarmAnimal animal in (location as Farm).getAllFarmAnimals())
+                                {
+                                    animal.pauseTimer = 100;
+                                }
+                            }
+                        }
+                        foreach (Farmer gracz in Game1.getOnlineFarmers())
+                        {
+                            gracz.temporarilyInvincible = true;
+                            gracz.temporaryInvincibilityTimer = 0;
+                            if (gracz.currentLocation != null)
+                            {
+                                if (!locations.Contains(gracz.currentLocation))
+                                {
+                                    locations.Add(gracz.currentLocation);
+                                }
+                            }
+                        }
+                        foreach (GameLocation location in locations)
+                        {
+                            foreach (Character Monsters in location.characters)
+                            {
+                                if (Monsters is Monster)
+                                {
+                                    if (Monsters is Bat || Monsters is Ghost || Monsters is DustSpirit || Monsters is DwarvishSentry || Monsters is DinoMonster)
+                                    {
+                                        Monsters.xVelocity = 0f;
+                                        Monsters.yVelocity = 0f;
+                                        if (Monsters is DustSpirit)
+                                        {
+                                            Monsters.yJumpVelocity = 0f;
+                                        }
+                                    }
+                                    if (Monsters is Fly || Monsters is Serpent)
+                                    {
+                                        (Monsters as Monster).setInvincibleCountdown(100);
+                                        Monsters.stopGlowing();
+                                    }
+                                    if (Monsters is LavaLurk)
+                                    {
+                                        (Monsters as LavaLurk).stateTimer = 1f;
+                                        if ((Monsters as LavaLurk).currentState.Value == LavaLurk.State.Firing)
+                                        {
+                                            (Monsters as LavaLurk).currentState.Value = LavaLurk.State.Emerged;
+                                        }
+                                    }
+                                    if (Monsters is BlueSquid)
+                                    {
+                                        (Monsters as BlueSquid).canMoveTimer = 500f;
+                                        if ((Monsters as BlueSquid).projectileIntroTimer.Value > 0)
+                                        {
+                                            (Monsters as BlueSquid).projectileIntroTimer.Value = 1000f;
+                                        }
+                                    }
+                                    if (Monsters is DinoMonster)
+                                    {
+                                        if ((Monsters as DinoMonster).totalFireTime > 0)
+                                        {
+                                            (Monsters as DinoMonster).nextFireTime = 500;
+                                            (Monsters as DinoMonster).totalFireTime = 3000;
+                                        }
+                                    }
+                                    if (Monsters is Leaper)
+                                    {
+                                        if ((Monsters as Leaper).leapProgress.Value < 0.1f)
+                                        {
+                                            (Monsters as Leaper).leaping.Value = false;
+                                        }
+                                    }
+                                    if (Monsters is Skeleton)
+                                    {
+                                        Monsters.Sprite.currentFrame = 0;
+                                    }
+                                    if (Monsters is Shooter)
+                                    {
+                                        (Monsters as Shooter).shooting.Value = false;
+                                    }
+                                }
+                            }
+                        }
+                        foreach (Potwory potwor in potwory)
+                        {
+                            if (potwor.monster is Duggy)
+                            {
+                                potwor.monster.Sprite.currentFrame = potwor.info;
+                            }
+                        }
+                        if (Game1.player.swimming.Value && !Game1.eventUp && !Game1.paused)
+                        {
+                            Game1.player.swimTimer = 100;
+                        }
+                        if (Game1.player.isInBed.Value && !Game1.eventUp && !Game1.paused)
+                        {
+                            Game1.player.regenTimer = 100;
+                        }
+                    }
+                    else
+                    {
+                        // Time should pass, calculate reduction...
+                        // This is before SKTime deduction if relevant
+                        int numPaused = Gracze.Where(p => p.message == 1).Count();
+                        int numPlayers = Gracze.Count;
+
+                        if (numPaused > 0)
+                        {
+                            int old = Game1.gameTimeInterval;
+
+                            // re-scale elapsed time based on fraction of players not paused
+                            double timeScale = (double)(numPlayers - numPaused) / (double)(numPlayers);
+                            double timePassed = (double)(Game1.gameTimeInterval - last_timeInterval) * timeScale + missing_time;
+
+                            // update game time and remember the remainder
+                            missing_time = timePassed % 1;
+                            Game1.gameTimeInterval = last_timeInterval + (int)Math.Truncate(timePassed);
+
+                            //// logging every 0.1s (100ms) (post-adjustment)
+                            //if (Game1.gameTimeInterval / 100 > last_timeInterval / 100 || Game1.gameTimeInterval < 50 || Game1.gameTimeInterval > 6950)
+                            //{
+                            //    this.Monitor.Log($"Paused: {numPaused}/{numPlayers}    timeScale={timeScale:f3}    {last_timeInterval}, {old} --> {Game1.gameTimeInterval}    {missing_time}", LogLevel.Info);
+                            //}
+                        }
+
+                    }
+                    if (JustUnpaused)
+                    {
+                        foreach (GameLocation location in locations)
+                        {
+                            foreach (Character Monsters in location.characters)
+                            {
+                                if (Monsters is Monster)
+                                {
+                                    if (Monsters.Speed == 0)
+                                    {
+                                        Monsters.Speed = Convert.ToInt32(MonsterInfo(Monsters.Name)[10]);
+                                        if (Monsters is Spiker)
+                                        {
+                                            Monsters.Speed = 14;
+                                        }
+                                        if (Monsters is GreenSlime || Monsters is SquidKid)
+                                        {
+                                            (Monsters as Monster).moveTowardPlayer(Convert.ToInt32(MonsterInfo(Monsters.Name)[9]));
+                                        }
+                                    }
+                                }
+                            }
+                            for (int k = location.TemporarySprites.Count - 1; k >= 0; k--)
+                            {
+                                if (location.TemporarySprites[k].bombRadius > 0)
+                                {
+                                    location.TemporarySprites[k].paused = false;
+                                }
+                            }
+                        }
+                        foreach (Potwory potwor in potwory)
+                        {
+                            if (potwor.monster is DinoMonster)
+                            {
+                                (potwor.monster as DinoMonster).totalFireTime = potwor.info + 500;
+                            }
+                            potwor.monster.Health = potwor.Health;
+                        }
+                        foreach (Farmer gracz in Game1.getOnlineFarmers())
+                        {
+                            gracz.temporarilyInvincible = false;
+                            gracz.temporaryInvincibilityTimer = 0;
+                        }
+                        potwory.Clear();
+                        locations.Clear();
+                    }
+                    if (SKTime && Game1.gameTimeInterval > 4000)
+                    {
+                        bool AllSK = true;
+                        foreach (Farmer gracz in Game1.getOnlineFarmers())
+                        {
+                            if (gracz.currentLocation is not MineShaft || (gracz.currentLocation as MineShaft).getMineArea() != 121 || (gracz.currentLocation as MineShaft).mustKillAllMonstersToAdvance())
+                            {
+                                AllSK = false;
+                            }
+                        }
+                        if (AllSK)
+                        {
+                            Game1.gameTimeInterval -= 2000;
+                            timeinterval -= 2000;
+                            SKTime = false;
+                        }
+                    }
+                    if (!SKTime && Game1.gameTimeInterval < 1000)
+                    {
+                        SKTime = true;
+                    }
+                }
+            }
+            JustPaused = false;
+            JustUnpaused = false;
+
+            // Remeber time interval (after adjustments)
+            last_timeInterval = Game1.gameTimeInterval;
         }
 
         private static string[] MonsterInfo(string name) {
